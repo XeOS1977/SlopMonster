@@ -4,6 +4,7 @@
     python3 deslop.py index.html
     python3 deslop.py index.html --view view-site     # score one tab only
     python3 deslop.py --text "some copy to check"
+    python3 deslop.py --language nl --text "een Nederlandse tekst"
 
 This reads only what a visitor can SEE: it strips <script>, <style>, and every HTML
 tag, so it scores the words on the page rather than the markup around them.
@@ -15,8 +16,7 @@ import html as _html   # aliased: `visible_text` takes a parameter named `html`
 import re
 import sys
 
-# ── the catalogue ────────────────────────────────────────────────────────────
-# Grouped by why they are a tell, because the fix differs per group.
+# ── ENGLISH PATTERNS ──────────────────────────────────────────────────────
 
 # Matched by root, so every inflection fires: `elevate` also catches elevates,
 # elevated, elevating, elevation. Landing-page copy is written in the third
@@ -44,39 +44,10 @@ VOCAB_EXACT = [
     'unlock the power', 'buckle up', 'the secret sauce', 'level up',
 ]
 
-
-def _root_pattern(word):
-    """A regex matching `word` and its inflections.
-
-    Strip a trailing e/ed/ing/ly to get the root, then allow the suffixes back.
-    The bare `e?` alternative is load-bearing: without it, stripping the `e` from
-    `elevate` leaves `elevat`, which no longer matches the base form itself.
-    """
-    root = re.sub(r'(ed|ing|ly|e)$', '', word)
-    if len(root) < 4:                     # too short to stem safely
-        return rf"(?<!\w){re.escape(word)}(?!\w)"
-    return rf"(?<!\w){re.escape(root)}(?:e|es|ed|ing|ion|ions|ional|ive|al|ally|s|ly|ness)?(?!\w)"
-
-# Negated "just/only/merely/simply", in either register.
-#
-# `\bnot\b` cannot match inside `isn't` — there is no standalone `not` token there — so
-# an uncontracted-only pattern misses every contracted form, which is the register a
-# model reaches for when it is trying hardest to sound human. Matching the `n't` suffix
-# covers isn't / aren't / wasn't / doesn't / don't / won't / can't without enumerating
-# them. Straight and curly apostrophes both.
-_NEG_JUST = r"(?:\bnot|n['’]t)\s+(?:just|only|merely|simply)\b"
-
-# The Y clause of the swap, reached across a comma or a single full stop. It is not
-# always a copula — "it doesn't just park you, it GETS you there" is the same move — so
-# this takes a pronoun subject and lets any verb follow. The punctuation carries the
-# precision: "It's not just about money." has no Y clause and stays clean, and so does
-# "Do not just take my word for it."
+_NEG_JUST = r"(?:\bnot|n['']t)\s+(?:just|only|merely|simply)\b"
 _XY_TAIL = r"[^!?]{0,80}?[,.]\s*(?:it|this|that|they|we|you|he|she|i)\b"
 
 PHRASES = [
-    # constructions, not words — these are the loudest tells
-    # The contracted and uncontracted forms both matter: formal register is not an
-    # adversarial rewrite, it is the default thing a model emits.
     (_NEG_JUST + r"[^.!?]{0,80}\bbut\b", "the 'not just X, but Y' construction"),
     (_NEG_JUST + _XY_TAIL, "the 'not just X, it's Y' construction"),
     (r"\bwhether you(?:'?re| are)\b[^.!?]{0,40}\bor\b", "the 'whether you're X or Y' opener"),
@@ -91,40 +62,102 @@ PHRASES = [
     (r"\bhelps? you to\b|\bcan help you\b",        "hedged benefit ('helps you to…')"),
     (r"\bmay potentially\b|\bcould potentially\b|\bmight possibly\b", "stacked hedging"),
     (r"\bvery unique\b|\bquite literally\b",       "intensifier padding"),
-    # Openers and self-answering questions. Cheap literals, near-zero false
-    # positives, and they cover the register a pure vocabulary list cannot see.
     (r"\bhere'?s the thing\b|\blet'?s break (it|this) down\b|\bthe best part\b",
                                                    "throat-clearing opener"),
     (r"\bready to get started\b|\blet'?s get started\b", "boilerplate CTA"),
     (r"\bthe (result|answer|catch|kicker|upshot)\?\s", "self-answering question"),
 ]
 
-# Invented social proof. Deliberately broad: this is the one mistake with no
-# route back, so recall matters more than precision. If your number is real and
-# you can evidence it, pass --allow-proof and the rule drops to advisory.
-# Hyphenated compound modifiers. One is ordinary English: "a 25-year warranty".
-# Four in a sentence is a model reaching for authority it has not earned, and the
-# giveaway is that they stack in front of one noun: "our industry-leading,
-# context-aware, best-in-class, AI-powered platform". The floor is high on purpose.
-# Real trade copy runs one to three per hundred words, and stacked slop runs sixty.
+# ── DUTCH PATTERNS ───────────────────────────────────────────────────────
+
+# Dutch vocabulary list — PLACEHOLDER FOR NATIVE SPEAKER REFINEMENT
+# These are initial suggestions; they need to be validated against real Dutch AI copy
+VOCAB_NL = [
+    'verdiepen', 'benutten', 'naadloos', 'verhogen', 'robuust', 'ontgrendelen', 'vrijlaten',
+    'empoweren', 'stroomlijnen', 'game-changer', 'game-changing',
+    'revolutioneren', 'transformeren', 'transformatie', 'innovatie', 'holistisch', 'synergie',
+    'paradigma', 'op maat', 'zorgvuldig', 'tapijt', 'getuigenis', 'baken', 'ongeëvenaard',
+    'supercharge', 'turbocharge', 'moeiteloos', 'next-level', 'cruciaal', 'foster',
+    'showcase', 'overtuigend', 'intuïtief', 'wereldklasse', 'best-in-class',
+]
+
+VOCAB_EXACT_NL = [
+    'gecraftet', 'gecurateerd', 'ontgrendel de kracht', 'reis', 'rijk', 'landschap',
+    'navigeer het landschap', 'in de wereld van', 'in de snelle wereld van',
+    'zie niet verder', 'duik erin', 'diepgaande analyse', 'aan boord',
+    'ontgrendel de kracht', 'koppel omhoog', 'het geheime recept', 'level up',
+]
+
+_NEG_JUST_NL = r"(?:\bniet\s+(?:alleen|gewoon)|niet\s+enkel\b|blote\s+)"
+_XY_TAIL_NL = r"[^!?]{0,80}?[,.]\\s*(?:het|dit|dat|wij|je|jij|u|hij|zij|ik)\b"
+
+PHRASES_NL = [
+    (_NEG_JUST_NL + r"[^.!?]{0,80}\bmaar\b", "de 'niet alleen X, maar Y' constructie"),
+    (r"\b(?:of je|of u)\b[^.!?]{0,40}\b(?:of|en)\b", "de 'of je X of Y' opener"),
+    (r"\b(?:stel je voor|denk aan|verzin een wereld)\b", "de 'stel je voor…' opener"),
+    (r"\b(?:kortom|eigenlijk|in conclusie|samenvattend)\b", "essay-samenvatting phrasing"),
+    (r"\b(?:als het om|wanneer het gaat om|bij|voor)\b", "vulwoord filler"),
+    (r"\b(?:op het einde van de dag|uiteindelijk|eigenlijk gezegd)\b", "standaard opener"),
+    (r"\b(?:het belangrijkste is|de waarheid is|dit is essentieel)\b", "throat-clearing opener"),
+    (r"\b(?:helpt je|kan je helpen|kan helpen|stelt je in staat)\b", "gehedgeerd voordeel"),
+    (r"\b(?:kan misschien|zou mogelijk|kan mogelijk|mag potentieel)\b", "gestapelde hedge"),
+    (r"\b(?:heel uniek|behoorlijk letterlijk)\b", "versterking-padding"),
+    (r"\b(?:hier is het punt|laten we dit even uitklaren|break it down)\b", "throat-clearing opener"),
+    (r"\b(?:klaar om te beginnen|laten we aan de slag gaan|tijd om te starten)\b", "boilerplate CTA"),
+    (r"\b(?:het resultaat\\?|het antwoord\\?|de catch\\?|de kicker\\?)\s", "zelfbeantwoorde vraag"),
+]
+
 COMPOUND = re.compile(r'\b[a-z]{2,}-[a-z]{2,}(?:-[a-z]{2,})*\b', re.I)
 COMPOUND_FLOOR = 4
 
 PROOF = re.compile(
-    # Digits, thousands separators and a decimal point, but never a trailing
-    # full stop. Absorbing it let "Don't Make Me Think, 2000. The reader…" read
-    # as a proof claim, because the year swallowed the sentence break and then
-    # reached across it for a noun. A number and its noun live in one sentence.
     r"([\d][\d,]*(?:\.\d+)?)\s*\+?\s*"
     r"((?:happy|early|active|satisfied|verified|trusted|delighted)\s+)?"
     r"(?:\w+\s+){0,1}"
     r"(users?|customers?|learners?|students?|teams?|members?|companies|businesses"
     r"|homeowners?|subscribers?|clients?|patients?|readers?|sites?|projects?)"
-    # Closed with a word boundary, like `_root_pattern`. Without it `sites?`
-    # matched inside "sitemaps", `teams?` inside "teamsters" and `projects?`
-    # inside "projectors", and "12 sitemaps" scored as invented social proof.
     r"(?!\w)",
     re.I)
+
+PROOF_NL = re.compile(
+    r"([\d][\d,]*(?:\.\d+)?)\s*\+?\s*"
+    r"((?:tevreden|actieve|geverifieerde|vertrouwde|blijde)\s+)?"
+    r"(?:\w+\s+){0,1}"
+    r"(gebruikers?|klanten?|leerlingen?|studenten?|teams?|leden?|bedrijven?|organisaties?"
+    r"|huiseigenaren?|abonnees?|cliënten?|patiënten?|lezers?|sites?|projecten?)"
+    r"(?!\w)",
+    re.I)
+
+
+def _language_config(language):
+    """Return vocabulary, phrases, and proof patterns for the selected language."""
+    language = (language or 'en').lower()
+    if language == 'nl':
+        return {
+            'vocab': VOCAB_NL,
+            'vocab_exact': VOCAB_EXACT_NL,
+            'phrases': PHRASES_NL,
+            'proof': PROOF_NL,
+        }
+    return {
+        'vocab': VOCAB,
+        'vocab_exact': VOCAB_EXACT,
+        'phrases': PHRASES,
+        'proof': PROOF,
+    }
+
+
+def _root_pattern(word):
+    """A regex matching `word` and its inflections.
+
+    Strip a trailing e/ed/ing/ly to get the root, then allow the suffixes back.
+    The bare `e?` alternative is load-bearing: without it, stripping the `e` from
+    `elevate` leaves `elevat`, which no longer matches the base form itself.
+    """
+    root = re.sub(r'(ed|ing|ly|e)$', '', word)
+    if len(root) < 4:                     # too short to stem safely
+        return rf"(?<!\w){re.escape(word)}(?!\w)"
+    return rf"(?<!\w){re.escape(root)}(?:e|es|ed|ing|ion|ions|ional|ive|al|ally|s|ly|ness)?(?!\w)"
 
 
 def normalise(t):
@@ -138,7 +171,7 @@ def normalise(t):
     Every input path runs through here. Markdown skipped it once, and the
     construction rules went blind on every .md file with a smart quote in it.
     """
-    t = t.replace('‑', '-').replace('\xa0', ' ').replace('’', "'")
+    t = t.replace('‑', '-').replace('\xa0', ' ').replace(''', "'")
     return re.sub(r'\s+', ' ', t).strip()
 
 
@@ -208,21 +241,22 @@ def markdown_prose(md):
     return normalise(md)
 
 
-def audit(text):
+def audit(text, language='en'):
     hits = {'vocab': [], 'phrases': [], 'punctuation': [], 'rhythm': [], 'proof': []}
     low = text.lower()
+    cfg = _language_config(language)
 
-    for w in VOCAB:
+    for w in cfg['vocab']:
         n = len(re.findall(_root_pattern(w), low))
         if n:
             hits['vocab'].append((w, n))
 
-    for w in VOCAB_EXACT:
+    for w in cfg['vocab_exact']:
         n = len(re.findall(rf"(?<!\w){re.escape(w)}(?!\w)", low))
         if n:
             hits['vocab'].append((w, n))
 
-    for pat, label in PHRASES:
+    for pat, label in cfg['phrases']:
         found = re.findall(pat, low)
         if found:
             hits['phrases'].append((label, len(found)))
@@ -268,7 +302,7 @@ def audit(text):
         for m in re.finditer(pat, text):
             hits['rhythm'].append(('rule-of-three list', m.group(0)[:60]))
 
-    for m in PROOF.finditer(text):
+    for m in cfg['proof'].finditer(text):
         hits['proof'].append(m.group(0).strip())
 
     return hits
@@ -325,22 +359,34 @@ if __name__ == '__main__':
     if not args:
         sys.exit(__doc__)
 
+    language = 'en'
+    # Parse --language or --language=code
+    while args and args[0].startswith('--language'):
+        if args[0] == '--language' and len(args) > 1:
+            language = args[1]
+            args = args[2:]
+        elif '=' in args[0]:
+            language = args[0].split('=', 1)[1]
+            args = args[1:]
+        else:
+            args = args[1:]
+
     allow_proof = '--allow-proof' in args
     args = [a for a in args if a != '--allow-proof']
 
     as_md = '--markdown' in args
     args = [a for a in args if a != '--markdown']
 
-    if args[0] == '--text':
+    if args and args[0] == '--text':
         text = ' '.join(args[1:])
         if as_md:
             text = markdown_prose(text)
-    elif args[0].endswith('.md') or as_md:
+    elif args and (args[0].endswith('.md') or as_md):
         try:
             text = markdown_prose(read_utf8(args[0]))
         except (FileNotFoundError, IsADirectoryError, PermissionError) as e:
             sys.exit(f'deslop: cannot read {args[0]}: {e.strerror}')
-    else:
+    elif args:
         try:
             html = read_utf8(args[0])
         except (FileNotFoundError, IsADirectoryError, PermissionError) as e:
@@ -354,6 +400,8 @@ if __name__ == '__main__':
             nxt = html.find('id="view-', start + 1)
             html = html[start:nxt if nxt > 0 else len(html)]
         text = visible_text(html)
+    else:
+        sys.exit(__doc__)
 
     # Nothing to score is a failure, not a pass. A cleanse that times out leaves a
     # zero-byte file, and a gate that stamps an empty file CLEAN reports slop as
@@ -362,4 +410,4 @@ if __name__ == '__main__':
         sys.exit('deslop: no visible copy to score — empty input')
 
     print(f'{len(text.split())} words of visible copy\n')
-    sys.exit(0 if report(audit(text), allow_proof=allow_proof) == 5 else 1)
+    sys.exit(0 if report(audit(text, language=language), allow_proof=allow_proof) == 5 else 1)
